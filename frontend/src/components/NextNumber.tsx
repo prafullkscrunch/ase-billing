@@ -18,6 +18,10 @@ import type { SequenceState } from '../types';
  *    here was the forward-only jump, whose input even refused (via its `min`)
  *    to accept a number at or below the highest one issued, which is exactly
  *    the range a freed number falls in.
+ *
+ * The two boxes are mutually exclusive — opening one closes the other — so
+ * "reuse a deleted number" is never hidden just because "change" happens to
+ * be open already.
  */
 export function NextNumber({
   customerId, category, date, explicitNumber, onExplicitNumber, onChanged,
@@ -115,7 +119,7 @@ export function NextNumber({
         <>
           <code className="fs-6">{state.previewNumber}</code>
           <button type="button" className="btn btn-sm btn-link p-0"
-                  onClick={() => setEditing(true)}>
+                  onClick={() => { setReusing(false); setEditing(true); }}>
             change
           </button>
         </>
@@ -152,10 +156,15 @@ export function NextNumber({
 
       {problem && <span className="text-danger small w-100">{problem}</span>}
 
-      {onExplicitNumber && !editing && (
+      {onExplicitNumber && (
         !reusing ? (
           <button type="button" className="btn btn-sm btn-link p-0 text-secondary"
-                  onClick={() => { setReusing(true); setReuseValue(''); setReuseProblem(null); }}>
+                  onClick={() => {
+                    setEditing(false);
+                    setReusing(true);
+                    setReuseValue('');
+                    setReuseProblem(null);
+                  }}>
             reuse a deleted number
           </button>
         ) : (

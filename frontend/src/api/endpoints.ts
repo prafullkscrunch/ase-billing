@@ -2,7 +2,7 @@ import { api } from './client';
 import type {
   BillPairRequest, BulkFinalizeResult, Category, Consignee, CurrentUser, Customer,
   Dashboard, DeleteResult, Invoice, InvoiceRequest, InvoiceStatus, InvoiceSummary,
-  SequenceState, ServiceItem, ShipmentContainerRequest, SoaPreview, TransportRoute,
+  LastShipment, SequenceState, ServiceItem, ShipmentContainerRequest, SoaPreview, TransportRoute,
 } from '../types';
 
 export const auth = {
@@ -93,6 +93,11 @@ export const shipmentApi = {
    */
   updateContainers: (id: number, req: ShipmentContainerRequest) =>
     api.put<Invoice[]>(`/shipments/${id}/containers`, req),
+
+  /** The customer's most recent shipment, to suggest the next HC invoice /
+   *  ICO mark number. Both fields are null when there's no prior shipment. */
+  last: (customerId: number) =>
+    api.get<LastShipment>(`/shipments/last?customerId=${customerId}`),
 };
 
 export const sequenceApi = {

@@ -54,7 +54,7 @@ from the rate master.
 | # | Charge | Type | Rate | 1X20 | 3X20 |
 |---|---|---|---|---:|---:|
 | 1 | Pre shipment export documentation charges | flat | 3,000 | 3,000 | 3,000 |
-| 2 | ICO/Permit, ROC Submission & Self-sealing Documentation | per TEU + base | 500 + base 500 | 1,000 | 2,000 |
+| 2 | ICO/Permit, ROC Submission & Self-sealing Documentation | per TEU + base | 500 + base 1,000 † | 1,500 | 2,500 |
 | 3 | Expenses on Phytosanitary certificate | per TEU + base | 750 + base 2,250 | 3,000 | 4,500 |
 | 4 | Certificate of weight & quality | per TEU + base | 750 + base 750 | 1,500 | 3,000 |
 | 5 | Certificate of origin | flat | 1,750 | 1,750 | 1,750 |
@@ -92,6 +92,14 @@ when the line reads "...with addl. declaration" — that's an extra document
 needed for that particular shipment, not a change to the formula. Bill it with
 the separate **Phytosanitary additional declaration** line under "Charges in
 the master but not on the standard sheet" below.
+
+† **ICO/Permit's base changed from 500 to 1,000** (customer confirmed: "the
+first TEU is 1500 and after that it is 500 more each container", effective
+the date of V14). Every bill before that date — including bill 516 above and
+the 1,000/1,500/2,000/4,000 figures in the table above it — was correctly
+billed at the old 500 base and keeps that figure; only invoices created after
+V14 use the new 1,000 base. Update this table's worked example, not the
+migration, if the rate moves again.
 
 ---
 

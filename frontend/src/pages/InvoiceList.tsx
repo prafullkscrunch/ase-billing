@@ -64,7 +64,8 @@ export function InvoiceList() {
     if (issued && !reason) return;
     try {
       const res = await invoiceApi.remove(r.id, reason ?? undefined);
-      setNotice(`${res.invoiceNumber} deleted. ${res.note}`);
+      const rateLine = res.rateNotes.length > 0 ? ' ' + res.rateNotes.join(' ') : '';
+      setNotice(`${res.invoiceNumber} deleted. ${res.note}${rateLine}`);
       reload();
     } catch (e) {
       setError(e);

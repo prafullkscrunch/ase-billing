@@ -70,6 +70,13 @@ public final class Dtos {
             String notes) {}
 
     /**
+     * The customer's most recent shipment, so the operator's next HC invoice
+     * and ICO mark numbers can be suggested from it rather than retyped.
+     * Both fields are null when the customer has no shipment yet.
+     */
+    public record LastShipmentView(String hcInvoiceNumber, String icoMarkFull) {}
+
+    /**
      * Corrects the container count/size on a shipment whose bill(s) are still
      * drafts. Every PER_TEU line on those drafts is re-priced against the new
      * TEU and the invoice totals recomputed.
@@ -288,7 +295,8 @@ public final class Dtos {
     public record CurrentUser(String username, String displayName, String role) {}
 
     public record DeleteResult(String invoiceNumber, String wasStatus,
-                               boolean numberFreed, Integer freedNumber, String note) {}
+                               boolean numberFreed, Integer freedNumber, String note,
+                               List<String> rateNotes) {}
 
     public record BulkFinalizeRequest(
             @NotEmpty(message = "Select at least one invoice") List<Long> ids) {}

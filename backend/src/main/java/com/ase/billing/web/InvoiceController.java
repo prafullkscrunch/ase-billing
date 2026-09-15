@@ -127,7 +127,7 @@ public class InvoiceController {
                 ? "Number %d is free again and will be issued next.".formatted(done.freedNumber())
                 : "A later invoice exists, so this leaves a gap. Set the number explicitly to reuse it.";
         return new DeleteResult(done.invoiceNumber(), done.wasStatus().name(),
-                done.numberFreed(), done.freedNumber(), note);
+                done.numberFreed(), done.freedNumber(), note, done.rateNotes());
     }
 
     /** Approves a reviewed batch. One refusal does not stop the rest. */

@@ -33,6 +33,17 @@ app:
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  # Writes to a real file on disk, not just whatever console the app happens to
+  # be running in — so there's something to open after the fact even if you
+  # weren't watching the terminal when something went wrong. Rotates daily and
+  # past 10MB, keeps 14 days, caps total size so it never grows unbounded.
+  file:
+    name: logs/ase-billing.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 14
+      total-size-cap: 200MB
   level:
     root: info
     org.hibernate.SQL: ${SQL_LOG:info}

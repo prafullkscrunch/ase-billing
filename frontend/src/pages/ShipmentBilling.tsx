@@ -1,13 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { invoiceApi, masters } from '../api/endpoints';
+import { invoiceApi, masters, shipmentApi } from '../api/endpoints';
 import { ErrorAlert, Spinner } from '../components/Alert';
-import { ParticularsTable, blankLine, lineFromService } from '../components/ParticularsTable';
+import { ParticularsTable, blankLine, lineFromService, withUpdatedPerTeuSuffix } from '../components/ParticularsTable';
 import { money } from '../components/Money';
 import { NextNumber } from '../components/NextNumber';
 import type {
   Customer, Invoice, InvoiceItemLine, ServiceItem, TransportLeg, TransportRoute,
 } from '../types';
+
+/**
+ * "ES/HC/2027/094" -> "ES/HC/2027/095"; "14/1850/2026/283" -> "14/1850/2026/284".
+ * Increments the last run of digits in the string, which is how ASE's own
+ * HC invoice and ICO mark numbers usually move from one shipment to the
+ * next. Falls back to the original string unchanged if there's no trailing
+ * number to bump — this is a starting suggestion, not a guarantee, and the
+ * field it fills stays fully editable.
+ */
+function incrementTrailingNumber(value: string): string {
+  const m = value.match(/(\d+)(\D*)$/);
+  if (!m) return value;
+  const digits = m[1];
+  const next = String(Number(digits) + 1).padStart(digits.length, '0');
+  return value.slice(0, m.index) + next + m[2];
+}
 
 /**
  * The main screen. One shipment produces a CNF bill and a T bill with consecutive
@@ -55,6 +71,26 @@ export function ShipmentBilling() {
   );
   const containerNotation = `${containerCount}X${containerSize}`;
 
+  // Suggests the next HC invoice / ICO mark number from this customer's last
+  // shipment — "+1" on whatever was last used, which is the pattern almost
+  // every real shipment follows. Only fills the fields when they're still
+  // blank, so it never overwrites something already typed for this bill, and
+  // both stay freely editable — the suggestion is wrong whenever the
+  // customer's own numbering resets (e.g. a new series each October).
+  useEffect(() => {
+    if (customerId == null) return;
+    shipmentApi.last(customerId)
+      .then((last) => {
+        if (last.hcInvoiceNumber) {
+          setHcInvoiceNumber((cur) => cur || incrementTrailingNumber(last.hcInvoiceNumber!));
+        }
+        if (last.icoMarkFull) {
+          setIcoMarkFull((cur) => cur || incrementTrailingNumber(last.icoMarkFull!));
+        }
+      })
+      .catch(() => { /* no prior shipment, or lookup failed — leave fields blank */ });
+  }, [customerId]);
+
   useEffect(() => {
     Promise.all([masters.customers(), masters.routes()])
       .then(([cs, rs]) => {
@@ -87,11 +123,20 @@ export function ShipmentBilling() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  // Re-price per-TEU lines when the container count changes.
+  // Re-price per-TEU lines when the container count changes, and refresh
+  // their printed wording along with it — the amount already followed the
+  // TEU change here; without this the "@Rs.. per TEU" text went stale the
+  // moment the container count changed after the line was added.
   useEffect(() => {
     setCnfItems((current) => current.map((line) =>
       line.calculationType === 'PER_TEU'
-        ? { ...line, teu, quantity: teu, amount: (line.baseAmount ?? 0) + (line.rate ?? 0) * teu }
+        ? {
+            ...line,
+            teu,
+            quantity: teu,
+            amount: (line.baseAmount ?? 0) + (line.rate ?? 0) * teu,
+            printedDescription: withUpdatedPerTeuSuffix(line.printedDescription, line, teu),
+          }
         : line));
   }, [teu]);
 
@@ -254,7 +299,13 @@ export function ShipmentBilling() {
             <div className="col-md-4">
               <label className="form-label" htmlFor="customer">Customer</label>
               <select id="customer" className="form-select" value={customerId ?? ''}
-                      onChange={(e) => setCustomerId(Number(e.target.value))}>
+                      onChange={(e) => {
+                        setCustomerId(Number(e.target.value));
+                        // A different customer's numbering is unrelated to
+                        // whatever was suggested for the last one.
+                        setHcInvoiceNumber('');
+                        setIcoMarkFull('');
+                      }}>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -272,6 +323,7 @@ export function ShipmentBilling() {
               <input id="hcinv" className="form-control font-monospace" value={hcInvoiceNumber}
                      placeholder="ES/HC/2027/094"
                      onChange={(e) => setHcInvoiceNumber(e.target.value)} />
+              <div className="form-text">Suggested from this customer's last shipment — edit freely.</div>
             </div>
 
             <div className="col-md-3">
