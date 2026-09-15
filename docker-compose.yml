@@ -1,0 +1,28 @@
+# Alternative to installing MySQL Server on Windows.
+#   docker compose up -d
+# Workbench can still connect to it on localhost:3306.
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: ase-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: ase_billing
+      MYSQL_USER: ase
+      MYSQL_PASSWORD: changeme
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - ase-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ase-mysql-data:

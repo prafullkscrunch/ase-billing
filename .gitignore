@@ -1,0 +1,11 @@
+target/
+node_modules/
+dist/
+.env
+*.log
+.idea/
+.vscode/
+*.iml
+
+# Local run configuration may contain a password; keep the template only.
+.run/*.local.xml

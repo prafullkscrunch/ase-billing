@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:ase;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      # Tests build the schema from the entities. Flyway's migrations are MySQL
+      # specific, so they are not run here; V1__schema.sql is verified against a
+      # real MySQL instance instead.
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false

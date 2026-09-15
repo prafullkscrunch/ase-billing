@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: ase-billing
+
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:ase_billing}?useSSL=false&serverTimezone=Asia/Kolkata&allowPublicKeyRetrieval=true
+    username: ${DB_USER:ase}
+    password: ${DB_PASSWORD:changeme}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Never let Hibernate create or update it.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc.time_zone: Asia/Kolkata
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  # Invoices below this status never appear in the SOA or any GST report.
+  soa:
+    include-status: FINALIZED
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  level:
+    root: info
+    org.hibernate.SQL: ${SQL_LOG:info}
+    # Every request/response, and every business decision (numbers issued,
+    # deletions, rate changes, finalisations) that would otherwise be
+    # invisible after the fact. Turn to DEBUG for step-by-step tracing when
+    # chasing a specific bug; INFO is enough for normal operation.
+    com.ase.billing: ${APP_LOG:info}

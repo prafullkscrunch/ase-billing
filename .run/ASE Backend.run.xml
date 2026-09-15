@@ -1,0 +1,19 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="ASE Backend" type="SpringBootApplicationConfigurationType"
+                 factoryName="Spring Boot" nameIsGenerated="false">
+    <module name="ase-billing" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.ase.billing.AseBillingApplication" />
+    <envs>
+      <env name="DB_HOST" value="localhost" />
+      <env name="DB_PORT" value="3306" />
+      <env name="DB_NAME" value="ase_billing" />
+      <env name="DB_USER" value="ase" />
+      <!-- Change this to the password you set when creating the database. -->
+      <env name="DB_PASSWORD" value="changeme" />
+      <env name="SERVER_PORT" value="8080" />
+    </envs>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
