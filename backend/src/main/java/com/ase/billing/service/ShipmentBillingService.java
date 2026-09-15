@@ -111,10 +111,20 @@ public class ShipmentBillingService {
         // straight after, keeping the pair consecutive. Only made when both
         // bills are actually created — a single-bill run just needs one number,
         // which is simpler to pass as the starting number regardless.
+        //
+        // Written as an if/else, not a ternary: a ternary mixing an int
+        // expression (cnfNumber + 1) with a boxed Integer (cnfNumber) is typed
+        // as int by Java, which auto-unboxes BOTH branches — including
+        // whichever one isn't taken. That throws NullPointerException the
+        // moment cnfNumber is null, which is the ordinary case whenever no
+        // number is being reused.
         Integer cnfNumber = req.startingRunningNumber();
-        Integer transportNumber = (cnfNumber != null && mode.includesCnf())
-                ? cnfNumber + 1
-                : cnfNumber;
+        Integer transportNumber;
+        if (cnfNumber != null && mode.includesCnf()) {
+            transportNumber = cnfNumber + 1;
+        } else {
+            transportNumber = cnfNumber;
+        }
 
         List<Invoice> created = new ArrayList<>();
         if (mode.includesCnf()) {
@@ -286,6 +296,8 @@ public class ShipmentBillingService {
                 if (item.getCalculationType() == CalculationType.PER_TEU
                         || item.getCalculationType() == CalculationType.PER_TEU_PER_DAY) {
                     item.setTeu(saved.getTeu());
+                    item.setPrintedDescription(
+                            withUpdatedPerTeuSuffix(item.getPrintedDescription(), item, saved.getTeu()));
                     touched = true;
                 }
             }
@@ -356,6 +368,34 @@ public class ShipmentBillingService {
     private ServiceCategory categoryByCode(String code) {
         return categories.findByCodeIgnoreCase(code)
                 .orElseThrow(() -> new NotFoundException("Category " + code + " is not configured."));
+    }
+
+    // Matches a suffix this same logic previously appended (mirrors the
+    // frontend's PER_TEU_SUFFIX_RE in ParticularsTable.tsx), so re-pricing a
+    // shipment twice never stacks the annotation on itself.
+    private static final java.util.regex.Pattern PER_TEU_SUFFIX =
+            java.util.regex.Pattern.compile(" \\(add'l @Rs[\\d.]+ per TEU\\)$| @Rs[\\d.]+ per TEU$");
+
+    /**
+     * ASE's own convention: a per-TEU line names its rate once there's more
+     * than one container/TEU to multiply it by, and prints plain at one TEU —
+     * see docs/CNF_STANDARD_SHEET.md. Re-derives that annotation after a
+     * shipment's container count changes, without disturbing anything else the
+     * operator typed into the description.
+     */
+    private String withUpdatedPerTeuSuffix(String description, InvoiceItem item, BigDecimal teu) {
+        String stripped = PER_TEU_SUFFIX.matcher(description == null ? "" : description).replaceAll("");
+        if (teu == null || teu.compareTo(BigDecimal.ONE) <= 0) {
+            return stripped;
+        }
+        BigDecimal rate = item.getRate() == null ? BigDecimal.ZERO : item.getRate();
+        String rateStr = rate.stripTrailingZeros().scale() <= 0
+                ? rate.setScale(0, java.math.RoundingMode.HALF_UP).toPlainString()
+                : rate.stripTrailingZeros().toPlainString();
+        boolean hasBase = item.getBaseAmount() != null && item.getBaseAmount().signum() > 0;
+        return stripped + (hasBase
+                ? " (add'l @Rs" + rateStr + " per TEU)"
+                : " @Rs" + rateStr + " per TEU");
     }
 
     /** Which half (or both) of the pair to actually create. */

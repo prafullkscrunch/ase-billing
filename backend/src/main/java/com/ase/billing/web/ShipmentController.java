@@ -1,5 +1,6 @@
 package com.ase.billing.web;
 
+import com.ase.billing.repo.ShipmentRepository;
 import com.ase.billing.service.ShipmentBillingService;
 import com.ase.billing.web.dto.Dtos.*;
 import jakarta.validation.Valid;
@@ -17,11 +18,28 @@ public class ShipmentController {
     private static final Logger log = LoggerFactory.getLogger(ShipmentController.class);
 
     private final ShipmentBillingService billing;
+    private final ShipmentRepository shipments;
     private final InvoiceMapper mapper;
 
-    public ShipmentController(ShipmentBillingService billing, InvoiceMapper mapper) {
+    public ShipmentController(ShipmentBillingService billing, ShipmentRepository shipments,
+                              InvoiceMapper mapper) {
         this.billing = billing;
+        this.shipments = shipments;
         this.mapper = mapper;
+    }
+
+    /**
+     * The customer's most recent shipment — lets the "Bill a shipment" screen
+     * suggest the next HC invoice / ICO mark number (typically "+1" on
+     * whatever was last used) instead of the operator retyping it. A
+     * suggestion only: the fields it fills stay freely editable, since the
+     * pattern breaks whenever the customer's own numbering resets.
+     */
+    @GetMapping("/last")
+    public LastShipmentView last(@RequestParam Long customerId) {
+        return shipments.findTopByCustomerIdOrderByIdDesc(customerId)
+                .map(s -> new LastShipmentView(s.getHcInvoiceNumber(), s.getIcoMarkFull()))
+                .orElse(new LastShipmentView(null, null));
     }
 
     /**

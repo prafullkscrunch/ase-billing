@@ -181,6 +181,9 @@ export interface DeleteResult {
   numberFreed: boolean;
   freedNumber: number | null;
   note: string;
+  /** One line per master rate this invoice had set via "keep this rate for
+   *  next time" — whether it was reverted, or left as is and why. */
+  rateNotes: string[];
 }
 
 export interface BulkFinalizeResult {
@@ -219,6 +222,11 @@ export interface BillPairRequest {
 export interface ShipmentContainerRequest {
   containerCount: number;
   containerSize: string;
+}
+
+export interface LastShipment {
+  hcInvoiceNumber: string | null;
+  icoMarkFull: string | null;
 }
 
 export interface SequenceState {
