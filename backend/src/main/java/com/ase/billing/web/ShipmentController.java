@@ -43,6 +43,26 @@ public class ShipmentController {
     }
 
     /**
+     * Backs the "taken twice" CNF redo flow: certificates re-issued for a
+     * shipment already billed once (a changed consignee, a changed port of
+     * discharge, etc.) — confirmed against real bills, this only ever
+     * re-bills ICO/Permit (at a halved base, but the same per-additional-
+     * mark rate as a normal bill), Phytosanitary, and Weight & Quality, plus
+     * Certificate of origin *if and only if* the original bill had one.
+     *
+     * <p>The lookup itself lives in {@link ShipmentBillingService}, not
+     * here — it needs to read a lazily-loaded {@code Invoice.category}, and
+     * with open-in-view off (see that class's {@code hydrate} method) a
+     * transaction has to still be open when that's read, which a plain
+     * controller method sitting outside any {@code @Transactional} boundary
+     * can't guarantee. It never creates or changes anything either way.
+     */
+    @GetMapping("/original-cnf")
+    public OriginalCnfLookup originalCnf(@RequestParam String mark) {
+        return billing.lookupOriginalCnf(mark);
+    }
+
+    /**
      * The main entry path. One shipment in, a CNF and/or T draft out, depending
      * on billMode. Every shipment in the historical bills is billed this way.
      */

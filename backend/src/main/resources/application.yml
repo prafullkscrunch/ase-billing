@@ -22,6 +22,14 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+  # Added for the WC & QC module's invoice-upload endpoint (POST
+  # /api/wcqc/upload). Billing has no multipart endpoints, so this key did
+  # not exist before and nothing here affects any existing route.
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
 server:
   port: ${SERVER_PORT:8080}
 
@@ -52,3 +60,6 @@ logging:
     # invisible after the fact. Turn to DEBUG for step-by-step tracing when
     # chasing a specific bug; INFO is enough for normal operation.
     com.ase.billing: ${APP_LOG:info}
+    # (com.ase.billing.wcqc needs no separate line — it's a sub-package of
+    # com.ase.billing above, and Logback level configuration already
+    # applies to descendant packages.)

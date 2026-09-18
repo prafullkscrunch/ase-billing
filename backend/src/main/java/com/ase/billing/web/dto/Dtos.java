@@ -77,6 +77,17 @@ public final class Dtos {
     public record LastShipmentView(String hcInvoiceNumber, String icoMarkFull) {}
 
     /**
+     * What the "taken twice" CNF redo flow finds when it looks up the
+     * original bill for the same ICO mark. {@code markCount} is computed
+     * from the mark string the operator is *currently* billing (the redo),
+     * not the original's — the two are usually the same mark, but this is
+     * authoritative either way. {@code found=false} means no earlier
+     * shipment used this mark at all, so the operator enters the redo lines
+     * by hand; {@code hadCertificateOfOrigin} only matters when found=true.
+     */
+    public record OriginalCnfLookup(boolean found, boolean hadCertificateOfOrigin, int markCount) {}
+
+    /**
      * Corrects the container count/size on a shipment whose bill(s) are still
      * drafts. Every PER_TEU line on those drafts is re-priced against the new
      * TEU and the invoice totals recomputed.
@@ -297,7 +308,31 @@ public final class Dtos {
     public record DeleteResult(String invoiceNumber, String wasStatus,
                                boolean numberFreed, Integer freedNumber, String note,
                                List<String> rateNotes) {}
+    // ---------- quotation (Hangal Coffee rate card) ----------------------------
 
+    /**
+     * routeId is set instead of serviceId for a transport-route line (the
+     * Transportation tab's per-route flat rates, e.g. "Mangalore-
+     * Kushalnagar") — exactly one of the two is non-null. A route line
+     * always has scalesWithContainers=true with rateForOneContainer equal
+     * to additionalPerContainer (a route charges the same per container,
+     * with no discount for extra ones, unlike a service's base+increment
+     * shape) and no effectiveFrom, since routes aren't date-versioned the
+     * way a service's global rate is.
+     */
+    public record QuotationLine(Long serviceId, Long routeId, String categoryCode, String categoryName, String name,
+                                CalculationType calculationType, boolean scalesWithContainers,
+                                BigDecimal rateForOneContainer, BigDecimal additionalPerContainer,
+                                LocalDate effectiveFrom) {}
+
+    public record QuotationUpdateRequest(
+            @NotNull(message = "Enter the 1-container rate")
+            @DecimalMin(value = "0", message = "The 1-container rate can't be negative")
+            BigDecimal rateForOneContainer,
+
+            @DecimalMin(value = "0", message = "The additional-per-container rate can't be negative")
+            BigDecimal additionalPerContainer) {}
+    
     public record BulkFinalizeRequest(
             @NotEmpty(message = "Select at least one invoice") List<Long> ids) {}
 

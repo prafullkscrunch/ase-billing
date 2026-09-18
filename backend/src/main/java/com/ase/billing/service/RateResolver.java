@@ -3,6 +3,7 @@ package com.ase.billing.service;
 import com.ase.billing.domain.Customer;
 import com.ase.billing.domain.ServiceItem;
 import com.ase.billing.domain.ServiceRate;
+import com.ase.billing.repo.CochinRateOverrideRepository;
 import com.ase.billing.repo.ServiceRateRepository;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +17,8 @@ import java.util.Optional;
  *
  *   manual override  (handled by the caller — if the user typed a rate, use it)
  *        v
+ *   Cochin override   (only when the caller says this bill is Cochin-bound —
+ *        v             see rateOrZero(service, customer, onDate, cochin))
  *   customer rate
  *        v
  *   global rate
@@ -29,9 +32,11 @@ import java.util.Optional;
 public class RateResolver {
 
     private final ServiceRateRepository rates;
+    private final CochinRateOverrideRepository cochinOverrides;
 
-    public RateResolver(ServiceRateRepository rates) {
+    public RateResolver(ServiceRateRepository rates, CochinRateOverrideRepository cochinOverrides) {
         this.rates = rates;
+        this.cochinOverrides = cochinOverrides;
     }
 
     public Optional<ServiceRate> resolve(ServiceItem service, Customer customer, LocalDate onDate) {
@@ -41,6 +46,38 @@ public class RateResolver {
 
     public BigDecimal rateOrZero(ServiceItem service, Customer customer, LocalDate onDate) {
         return resolve(service, customer, onDate).map(ServiceRate::getRate).orElse(BigDecimal.ZERO);
+    }
+
+    /**
+     * Same as {@link #rateOrZero(ServiceItem, Customer, LocalDate)}, except
+     * when {@code cochin} is true and this service has a Cochin-specific
+     * rate (see {@link com.ase.billing.domain.CochinRateOverride}) — that
+     * rate is used instead of the global one. A service with no override
+     * row is unaffected by the flag and returns its normal global rate
+     * either way, since not every CNF charge differs for Cochin.
+     */
+    public BigDecimal rateOrZero(ServiceItem service, Customer customer, LocalDate onDate, boolean cochin) {
+        if (cochin) {
+            Optional<BigDecimal> override = cochinOverrides.findByServiceId(service.getId())
+                    .map(o -> o.getRate());
+            if (override.isPresent()) return override.get();
+        }
+        return rateOrZero(service, customer, onDate);
+    }
+
+    /**
+     * The base amount to use for this service — the Cochin override's own
+     * base_amount when one applies, otherwise the service's normal
+     * base_amount. None of the current Cochin-overridden charges need a
+     * non-zero base, but this keeps the override complete if one ever does.
+     */
+    public BigDecimal baseAmountOrDefault(ServiceItem service, boolean cochin) {
+        if (cochin) {
+            return cochinOverrides.findByServiceId(service.getId())
+                    .map(o -> o.getBaseAmount())
+                    .orElse(service.getBaseAmount());
+        }
+        return service.getBaseAmount();
     }
 
     /**
@@ -62,3 +99,4 @@ public class RateResolver {
         return v.stripTrailingZeros().toPlainString();
     }
 }
+

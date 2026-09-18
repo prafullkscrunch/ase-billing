@@ -104,6 +104,42 @@ public class RateUpdateService {
     }
 
     /**
+     * Moves the general house rate directly, independent of any customer —
+     * used by the Quotation (rate card) screen, where the operator is editing
+     * the master rate itself rather than an invoice line. Same close-old,
+     * open-new pattern as {@link #updateRate}: every invoice already issued
+     * keeps its own frozen copy regardless.
+     */
+    @Transactional
+    public boolean updateGlobalRate(ServiceItem service, BigDecimal newRate, LocalDate from, String username) {
+        Optional<ServiceRate> current = rates.resolveGlobal(service.getId(), from).stream().findFirst();
+
+        if (current.isPresent() && current.get().getRate().compareTo(newRate) == 0) {
+            return false;
+        }
+
+        current.ifPresent(existing -> {
+            if (existing.getEffectiveTo() == null) {
+                existing.setEffectiveTo(from.minusDays(1));
+                rates.save(existing);
+            }
+        });
+
+        ServiceRate fresh = new ServiceRate();
+        fresh.setService(service);
+        fresh.setCustomer(null);
+        fresh.setRate(newRate);
+        fresh.setGstRate(current.map(ServiceRate::getGstRate).orElse(new BigDecimal("18.00")));
+        fresh.setEffectiveFrom(from);
+        fresh.setSource("QUOTATION");
+        fresh.setSetBy(username);
+        rates.save(fresh);
+        log.info("Quotation: service {} rate moved to {} from {} by {}.",
+                service.getId(), newRate, from, username);
+        return true;
+    }
+
+    /**
      * Called when an invoice that set a rate is deleted. Reverts the master
      * rate back to whatever it was before — but only in the one case that's
      * unambiguous: the rate this invoice set is still the current, untouched,

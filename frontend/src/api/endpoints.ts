@@ -2,7 +2,8 @@ import { api } from './client';
 import type {
   BillPairRequest, BulkFinalizeResult, Category, Consignee, CurrentUser, Customer,
   Dashboard, DeleteResult, Invoice, InvoiceRequest, InvoiceStatus, InvoiceSummary,
-  LastShipment, SequenceState, ServiceItem, ShipmentContainerRequest, SoaPreview, TransportRoute,
+  LastShipment, OriginalCnfLookup, QuotationLine, QuotationUpdateRequest, SequenceState, ServiceItem,
+  ShipmentContainerRequest, SoaPreview, TransportRoute,
 } from '../types';
 
 export const auth = {
@@ -14,8 +15,8 @@ export const auth = {
 export const masters = {
   customers: () => api.get<Customer[]>('/customers'),
   categories: () => api.get<Category[]>('/categories'),
-  services: (categoryCode: string, customerId: number) =>
-    api.get<ServiceItem[]>(`/services?category=${categoryCode}&customerId=${customerId}`),
+  services: (categoryCode: string, customerId: number, cochin?: boolean) =>
+    api.get<ServiceItem[]>(`/services?category=${categoryCode}&customerId=${customerId}${cochin ? '&cochin=true' : ''}`),
   routes: () => api.get<TransportRoute[]>('/transport-routes'),
   /** Changes a route's standing price. Bills already issued keep their own rate. */
   updateRouteRate: (id: number, ratePerContainer: number) =>
@@ -25,9 +26,9 @@ export const masters = {
   /** Adds a buyer the list doesn't have yet; kept for later months. */
   addConsignee: (name: string, country?: string) =>
     api.post<Consignee>('/consignees', { name, country: country ?? null }),
-  /** The fourteen charges every CNF bill carries, in print order. */
-  standardSheet: (categoryCode: string, customerId: number) =>
-    api.get<ServiceItem[]>(`/services/standard?category=${categoryCode}&customerId=${customerId}`),
+  /** The standard charges every CNF bill carries, in print order. Pass cochin=true for a Cochin-bound shipment (confirmed rare: max ~10/year) — swaps in Cochin rates and adds Tally Wages. */
+  standardSheet: (categoryCode: string, customerId: number, cochin?: boolean) =>
+    api.get<ServiceItem[]>(`/services/standard?category=${categoryCode}&customerId=${customerId}${cochin ? '&cochin=true' : ''}`),
 };
 
 export interface InvoiceFilters {
@@ -98,6 +99,15 @@ export const shipmentApi = {
    *  ICO mark number. Both fields are null when there's no prior shipment. */
   last: (customerId: number) =>
     api.get<LastShipment>(`/shipments/last?customerId=${customerId}`),
+
+  /**
+   * Backs the "taken twice" CNF redo flow — looks up the original bill for
+   * the given ICO mark and reports whether it had a Certificate of origin
+   * line, plus the mark count computed from the mark string (a range like
+   * "292-295" counts as 4, not 1 — see Shipment.markCount on the backend).
+   */
+  originalCnf: (mark: string) =>
+    api.get<OriginalCnfLookup>(`/shipments/original-cnf?mark=${encodeURIComponent(mark)}`),
 };
 
 export const sequenceApi = {
@@ -125,4 +135,11 @@ export const soaApi = {
 
 export const dashboardApi = {
   summary: (month?: string) => api.get<Dashboard>(`/dashboard${month ? `?month=${month}` : ''}`),
+};
+
+export const quotationApi = {
+  /** Every category's rate card, in category order. */
+  all: () => api.get<QuotationLine[]>('/quotation'),
+  update: (serviceId: number, req: QuotationUpdateRequest) =>
+    api.put<QuotationLine>(`/quotation/${serviceId}`, req),
 };

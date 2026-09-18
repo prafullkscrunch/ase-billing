@@ -81,4 +81,35 @@ public class Shipment {
         int dash = tail.indexOf('-');
         return dash > 0 ? tail.substring(0, dash).trim() : tail;
     }
+
+    /**
+     * How many ICO marks this shipment actually carries — '14/1850/2026/292-295'
+     * is 4 marks (292,293,294,295), not 1, even though the shipment itself may
+     * be a single container ("1X20"). Confirmed against real bills: ICO/Permit
+     * is the one CNF charge that scales with mark count, not TEU/container
+     * count — e.g. CNF/374 ("1X20", marks 292-295) bills ICO as "Addl. ICO
+     * 3SETS@500/-" (base for the 1st mark + 500 x 3 additional marks), and the
+     * "taken twice" redo variant (see the ICO redo helper on this same
+     * shipment's billing flow) uses the identical per-additional-mark rate,
+     * just with a halved base. Falls back to 1 for a single mark or anything
+     * that doesn't parse as a clean numeric range.
+     */
+    public static int markCount(String icoMarkFull) {
+        if (icoMarkFull == null || icoMarkFull.isBlank()) return 1;
+        String tail = icoMarkFull.substring(icoMarkFull.lastIndexOf('/') + 1).trim();
+        int dash = tail.indexOf('-');
+        if (dash <= 0 || dash == tail.length() - 1) return 1;
+        try {
+            int start = Integer.parseInt(tail.substring(0, dash).trim());
+            int end = Integer.parseInt(tail.substring(dash + 1).trim());
+            int count = end - start + 1;
+            return count > 0 ? count : 1;
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    public int markCount() {
+        return markCount(icoMarkFull);
+    }
 }

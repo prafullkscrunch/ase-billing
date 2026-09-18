@@ -59,10 +59,18 @@ public class MasterDataController {
     /**
      * Services for a category, each carrying the rate that applies today for this
      * customer. The rate is a suggestion: the invoice stores whatever is billed.
+     *
+     * @param cochin  true for a Cochin-bound shipment (confirmed rare: max
+     *                ~10/year) — swaps in each service's Cochin-specific rate
+     *                where one exists (see {@link RateResolver}) and excludes
+     *                any service that is Cochin-only from a non-Cochin request,
+     *                or the reverse: a Cochin-only service (Tally Wages) only
+     *                ever appears when this is true.
      */
     @GetMapping("/services")
     public List<ServiceView> services(@RequestParam(required = false) String category,
-                                      @RequestParam(required = false) Long customerId) {
+                                      @RequestParam(required = false) Long customerId,
+                                      @RequestParam(defaultValue = "false") boolean cochin) {
         List<ServiceItem> found = (category == null || category.isBlank())
                 ? services.findByActiveTrueOrderBySortOrderAsc()
                 : services.findByCategoryCodeIgnoreCaseAndActiveTrueOrderBySortOrderAsc(category);
@@ -70,18 +78,20 @@ public class MasterDataController {
         var customer = customerId == null ? null : customers.findById(customerId).orElse(null);
         LocalDate today = LocalDate.now();
 
-        return found.stream().map(s -> new ServiceView(
-                s.getId(),
-                s.getCategory().getCode(),
-                s.getName(),
-                s.getPrintTemplate(),
-                s.getCalculationType(),
-                s.getDefaultUnit(),
-                customer == null ? null : rateResolver.rateOrZero(s, customer, today),
-                s.isStandard(),
-                s.getDefaultQuantity(),
-                s.getBaseAmount()
-        )).toList();
+        return found.stream()
+                .filter(s -> !s.isCochinOnly() || cochin)
+                .map(s -> new ServiceView(
+                        s.getId(),
+                        s.getCategory().getCode(),
+                        s.getName(),
+                        s.getPrintTemplate(),
+                        s.getCalculationType(),
+                        s.getDefaultUnit(),
+                        customer == null ? null : rateResolver.rateOrZero(s, customer, today, cochin),
+                        s.isStandard(),
+                        s.getDefaultQuantity(),
+                        cochin ? rateResolver.baseAmountOrDefault(s, true) : s.getBaseAmount()
+                )).toList();
     }
 
     /**
@@ -90,11 +100,17 @@ public class MasterDataController {
      * Every CNF bill ASE issues carries the same fourteen charges. Returning them
      * as a ready-made list means a new bill starts complete and the operator
      * deletes what does not apply, rather than rebuilding the sheet each time.
+     *
+     * @param cochin  see {@link #services(String, Long, boolean)} — a
+     *                Cochin-bound bill's standard sheet swaps in the Cochin
+     *                rates and adds Tally Wages; a Mangalore bill's sheet is
+     *                exactly as before.
      */
     @GetMapping("/services/standard")
     public List<ServiceView> standard(@RequestParam String category,
-                                      @RequestParam Long customerId) {
-        return services(category, customerId).stream().filter(ServiceView::standard).toList();
+                                      @RequestParam Long customerId,
+                                      @RequestParam(defaultValue = "false") boolean cochin) {
+        return services(category, customerId, cochin).stream().filter(ServiceView::standard).toList();
     }
 
     /**

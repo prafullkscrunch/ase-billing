@@ -52,6 +52,15 @@ public class ServiceItem {
     @Column(name = "is_standard", nullable = false)
     private boolean standard = false;
 
+    /**
+     * Only ever billed on a Cochin-bound shipment (confirmed: max ~10/year) —
+     * excluded from a Mangalore standard CNF sheet entirely, not merely
+     * charged at a different rate. "Tally Wages" is the first such charge;
+     * Mangalore has no equivalent line for it at all.
+     */
+    @Column(name = "cochin_only", nullable = false)
+    private boolean cochinOnly = false;
+
     @Column(name = "default_quantity", nullable = false, precision = 12, scale = 3)
     private java.math.BigDecimal defaultQuantity = java.math.BigDecimal.ONE;
 

@@ -190,6 +190,13 @@ public class InvoicePdfService {
         }
         if (notBlank(inv.getHsnCode())) {
             sb.append("\nHsn code.").append(inv.getHsnCode());
+            // A shipment's notes render right here, in parens, with no space —
+            // "Hsn code.996713(Taken twice due change in consignee)" — matching
+            // ASE's own historical bills exactly (e.g. CNF/347, CNF/037). This
+            // is where the "taken twice" redo flow's reason text ends up.
+            if (s != null && notBlank(s.getNotes())) {
+                sb.append('(').append(s.getNotes()).append(')');
+            }
         }
         return sb.toString();
     }

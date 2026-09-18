@@ -7,6 +7,12 @@ import { ShipmentBilling } from './pages/ShipmentBilling';
 import { InvoiceList } from './pages/InvoiceList';
 import { InvoiceEditor } from './pages/InvoiceEditor';
 import { SoaPage } from './pages/SoaPage';
+import { QuotationPage } from './pages/QuotationPage';
+import { WcQcLayout } from './pages/wcqc/WcQcLayout';
+import { GenerateCombo } from './pages/wcqc/GenerateCombo';
+import { GenerateWc } from './pages/wcqc/GenerateWc';
+import { GenerateQc } from './pages/wcqc/GenerateQc';
+import { CertificateHistory } from './pages/wcqc/CertificateHistory';
 
 export function App() {
   const { user, loading, signOut } = useAuth();
@@ -24,6 +30,12 @@ export function App() {
             <Item to="/shipments/new" label="Bill a shipment" />
             <Item to="/invoices" label="Invoices" />
             <Item to="/soa" label="GST sales" />
+            <Item to="/quotation" label="Quotation" />
+            <li className="nav-item ms-2 border-start ps-2">
+              <NavLink to="/wcqc" className={({ isActive }) => `nav-link${isActive ? ' active fw-semibold' : ''}`}>
+                WC &amp; QC
+              </NavLink>
+            </li>
           </ul>
           <span className="navbar-text me-3 small">{user.displayName}</span>
           <button className="btn btn-sm btn-outline-secondary" onClick={signOut}>Sign out</button>
@@ -38,6 +50,17 @@ export function App() {
           <Route path="/invoices/new" element={<InvoiceEditor />} />
           <Route path="/invoices/:id" element={<InvoiceEditor />} />
           <Route path="/soa" element={<SoaPage />} />
+          <Route path="/quotation" element={<QuotationPage />} />
+
+          {/* WC & QC — a separate module. See src/pages/wcqc and src/api/wcqcApi.ts. */}
+          <Route path="/wcqc" element={<WcQcLayout />}>
+            <Route index element={<Navigate to="/wcqc/generate" replace />} />
+            <Route path="generate" element={<GenerateCombo />} />
+            <Route path="generate-wc" element={<GenerateWc />} />
+            <Route path="generate-qc" element={<GenerateQc />} />
+            <Route path="history" element={<CertificateHistory />} />
+          </Route>
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

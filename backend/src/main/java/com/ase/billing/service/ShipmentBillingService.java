@@ -13,7 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.ase.billing.web.dto.Dtos.OriginalCnfLookup;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -66,7 +66,38 @@ public class ShipmentBillingService {
         this.calculator = calculator;
         this.rateUpdates = rateUpdates;
     }
+    /**
+     * Backs the "taken twice" CNF redo flow. Originally lived directly in
+     * {@code ShipmentController}, reading {@code inv.getCategory().getCode()}
+     * outside any transaction — since open-in-view is off (see {@link
+     * #hydrate}), that lazy proxy had no session left to initialise against
+     * by the time the controller's stream ran, and every call to this lookup
+     * failed with a LazyInitializationException. Moved here, alongside
+     * {@code updateContainers} and {@code hydrate}, which already exist
+     * specifically to keep this class of bug out of the controller layer.
+     */
+    @Transactional(readOnly = true)
+    public OriginalCnfLookup lookupOriginalCnf(String mark) {
+        int markCount = Shipment.markCount(mark);
 
+        Shipment original = shipments.findFirstByIcoMarkFullOrderByIdAsc(mark)
+                .or(() -> shipments.findFirstByIcoMarkFullContainingOrderByIdAsc(mark))
+                .orElse(null);
+        if (original == null) {
+            return new OriginalCnfLookup(false, false, markCount);
+        }
+
+        boolean hadCertificateOfOrigin = invoices.findByShipmentIdOrderByRunningNumberAsc(original.getId())
+                .stream()
+                .filter(inv -> "CNF".equalsIgnoreCase(inv.getCategory().getCode()))
+                .findFirst()
+                .map(inv -> inv.getItems().stream().anyMatch(item ->
+                        item.getPrintedDescription() != null
+                                && item.getPrintedDescription().toLowerCase().contains("certificate of origin")))
+                .orElse(false);
+
+        return new OriginalCnfLookup(true, hadCertificateOfOrigin, markCount);
+    }
     /**
      * Creates the CNF invoice, the T invoice, or both, with consecutive running
      * numbers when both are made.
@@ -295,9 +326,18 @@ public class ShipmentBillingService {
             for (InvoiceItem item : inv.getItems()) {
                 if (item.getCalculationType() == CalculationType.PER_TEU
                         || item.getCalculationType() == CalculationType.PER_TEU_PER_DAY) {
-                    item.setTeu(saved.getTeu());
+                    // ICO/Permit is the one CNF charge that scales with the
+                    // number of ICO marks on the shipment, not container
+                    // count — confirmed against real bills (e.g. CNF/374:
+                    // "1X20" but marks 292-295, billed for 4, not 1). A plain
+                    // container-count edit must not silently drop that back
+                    // down to TEU alone.
+                    BigDecimal effectiveTeu = isIcoPermit(item)
+                            ? saved.getTeu().max(BigDecimal.valueOf(saved.markCount()))
+                            : saved.getTeu();
+                    item.setTeu(effectiveTeu);
                     item.setPrintedDescription(
-                            withUpdatedPerTeuSuffix(item.getPrintedDescription(), item, saved.getTeu()));
+                            withUpdatedPerTeuSuffix(item.getPrintedDescription(), item, effectiveTeu));
                     touched = true;
                 }
             }
@@ -375,6 +415,17 @@ public class ShipmentBillingService {
     // shipment twice never stacks the annotation on itself.
     private static final java.util.regex.Pattern PER_TEU_SUFFIX =
             java.util.regex.Pattern.compile(" \\(add'l @Rs[\\d.]+ per TEU\\)$| @Rs[\\d.]+ per TEU$");
+
+    /**
+     * ICO/Permit is billed by number of ICO marks, not TEU, whenever those
+     * differ — confirmed against real bills. Matched by name rather than a
+     * dedicated flag since it's the one service this applies to; if that
+     * ever changes, this is the one place to update.
+     */
+    private boolean isIcoPermit(InvoiceItem item) {
+        return item.getService() != null && item.getService().getName() != null
+                && item.getService().getName().toUpperCase().contains("ICO/PERMIT");
+    }
 
     /**
      * ASE's own convention: a per-TEU line names its rate once there's more
