@@ -23,6 +23,18 @@
     <!-- Overrides Spring Boot 3.3.4's managed 1.18.34, which silently generates
          nothing on JDK 24+. Symptom: hundreds of "cannot find symbol" on getters. -->
     <lombok.version>1.18.38</lombok.version>
+    <!--
+      Explicit, not just inherited from java.version below — an IDE reading
+      this POM needs an unambiguous release target. Without this, IntelliJ
+      has been observed defaulting a module's "target bytecode version" to
+      something absurdly old (Java 5), which the JDK 21 toolchain then
+      refuses to honor outright.
+    -->
+    <maven.compiler.release>21</maven.compiler.release>
+    <frontend.dir>${project.basedir}/../frontend</frontend.dir>
+    <!-- -Dskip.frontend=true skips the npm build entirely, for a fast
+         backend-only compile when the UI hasn't changed. -->
+    <skip.frontend>false</skip.frontend>
   </properties>
 
   <dependencies>
@@ -129,6 +141,99 @@
             </exclude>
           </excludes>
         </configuration>
+      </plugin>
+
+      <!--
+        Builds the React frontend and drops it straight into
+        src/main/resources/static, so a plain Maven build (or IntelliJ's Run
+        button, with "Delegate IDE build/run actions to Maven" on, or a
+        "Before launch: Run Maven Goal" step pointed at generate-resources)
+        keeps the served UI in sync with frontend/src automatically — no more
+        manually running npm run build and copying dist by hand.
+
+        Uses its OWN private Node/npm under target/, not whatever is (or
+        isn't) on the system PATH, so this works the same on every machine.
+        Skip with -Dskip.frontend=true for a fast backend-only build when the
+        UI hasn't changed.
+      -->
+      <plugin>
+        <groupId>com.github.eirslett</groupId>
+        <artifactId>frontend-maven-plugin</artifactId>
+        <version>1.15.0</version>
+        <configuration>
+          <workingDirectory>${frontend.dir}</workingDirectory>
+          <installDirectory>${project.build.directory}/frontend-tools</installDirectory>
+        </configuration>
+        <executions>
+          <execution>
+            <id>install-node-and-npm</id>
+            <goals><goal>install-node-and-npm</goal></goals>
+            <phase>generate-resources</phase>
+            <configuration>
+              <nodeVersion>v20.17.0</nodeVersion>
+              <skip>${skip.frontend}</skip>
+            </configuration>
+          </execution>
+          <execution>
+            <id>npm-install</id>
+            <goals><goal>npm</goal></goals>
+            <phase>generate-resources</phase>
+            <configuration>
+              <!--
+                The legacy-peer-deps flag below: a dependency (currently vite)
+                can resolve to a newer major release than @vitejs/plugin-react's
+                peer range declares support for, purely because of when npm
+                happens to run relative to upstream releases — not because of
+                anything in this project. The two work together in practice;
+                only npm's strict peer-conflict check objects. Without this
+                flag, a routine install can start failing on any given day for
+                reasons with nothing to do with this codebase.
+              -->
+              <arguments>install --legacy-peer-deps</arguments>
+              <skip>${skip.frontend}</skip>
+            </configuration>
+          </execution>
+          <execution>
+            <id>npm-build</id>
+            <goals><goal>npm</goal></goals>
+            <phase>generate-resources</phase>
+            <configuration>
+              <arguments>run build</arguments>
+              <skip>${skip.frontend}</skip>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!--
+        Copies the just-built frontend/dist into src/main/resources/static,
+        overwriting the previous build. Runs in the same generate-resources
+        phase, after the npm-build execution above (plugin executions in one
+        phase run in declaration order within the pom) and before Maven's own
+        resources:resources copies src/main/resources into target/classes —
+        so the compiled app always serves whatever was just built, not last
+        session's leftovers.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-frontend-dist</id>
+            <phase>generate-resources</phase>
+            <goals><goal>copy-resources</goal></goals>
+            <configuration>
+              <skip>${skip.frontend}</skip>
+              <outputDirectory>${project.basedir}/src/main/resources/static</outputDirectory>
+              <overwrite>true</overwrite>
+              <resources>
+                <resource>
+                  <directory>${frontend.dir}/dist</directory>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

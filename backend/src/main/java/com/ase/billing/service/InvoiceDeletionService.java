@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 /**
  * Deleting an invoice and freeing its number.
  *
@@ -37,18 +39,23 @@ public class InvoiceDeletionService {
     private final InvoiceRepository invoices;
     private final InvoiceSequenceRepository sequences;
     private final AuditLogRepository audit;
+    private final RateUpdateService rateUpdates;
 
     public InvoiceDeletionService(InvoiceRepository invoices,
                                   InvoiceSequenceRepository sequences,
-                                  AuditLogRepository audit) {
+                                  AuditLogRepository audit,
+                                  RateUpdateService rateUpdates) {
         this.invoices = invoices;
         this.sequences = sequences;
         this.audit = audit;
+        this.rateUpdates = rateUpdates;
     }
 
-    /** What happened, so the UI can say whether the number came back. */
+    /** What happened, so the UI can say whether the number came back — and
+     *  whether deleting this invoice reverted (or left alone) any master
+     *  rate it had set via "keep this rate for next time". */
     public record Deleted(String invoiceNumber, InvoiceStatus wasStatus,
-                          boolean numberFreed, Integer freedNumber) {}
+                          boolean numberFreed, Integer freedNumber, List<String> rateNotes) {}
 
     @Transactional
     public Deleted delete(Long id, String reason, String username) {
@@ -64,22 +71,27 @@ public class InvoiceDeletionService {
         }
 
         // Record before deleting, so the trail survives the row.
-        AuditLog log = new AuditLog();
-        log.setEntityType("Invoice");
-        log.setEntityId(inv.getId());
-        log.setAction("DELETE");
-        log.setUsername(username);
-        log.setDetail("""
+        AuditLog entry = new AuditLog();
+        entry.setEntityType("Invoice");
+        entry.setEntityId(inv.getId());
+        entry.setAction("DELETE");
+        entry.setUsername(username);
+        entry.setDetail("""
                 Deleted %s (%s) dated %s for %s. Taxable %s, grand total %s. Reason: %s"""
                 .formatted(inv.getInvoiceNumber(), was, inv.getInvoiceDate(),
                         inv.getCustomer().getName(), inv.getTaxableAmount(),
                         inv.getGrandTotal(), reason == null || reason.isBlank() ? "(draft)" : reason));
-        audit.save(log);
+        audit.save(entry);
 
         Long customerId = inv.getCustomer().getId();
         String fy = inv.getFinancialYear();
         int running = inv.getRunningNumber();
         String number = inv.getInvoiceNumber();
+
+        // If this invoice moved a master rate via "keep this rate for next
+        // time", undo that too where it's safe to — see
+        // RateUpdateService.revertRatesSetBy for exactly what counts as safe.
+        List<String> rateNotes = rateUpdates.revertRatesSetBy(id);
 
         invoices.delete(inv);
         invoices.flush();
@@ -93,7 +105,7 @@ public class InvoiceDeletionService {
                     + "reuse it by setting the number explicitly on the next bill.",
                     number, was, username, running);
         }
-        return new Deleted(number, was, freed, freed ? running : null);
+        return new Deleted(number, was, freed, freed ? running : null, rateNotes);
     }
 
     /**

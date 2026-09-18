@@ -22,6 +22,14 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+  # Added for the WC & QC module's invoice-upload endpoint (POST
+  # /api/wcqc/upload). Billing has no multipart endpoints, so this key did
+  # not exist before and nothing here affects any existing route.
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
 server:
   port: ${SERVER_PORT:8080}
 
@@ -33,6 +41,17 @@ app:
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  # Writes to a real file on disk, not just whatever console the app happens to
+  # be running in — so there's something to open after the fact even if you
+  # weren't watching the terminal when something went wrong. Rotates daily and
+  # past 10MB, keeps 14 days, caps total size so it never grows unbounded.
+  file:
+    name: logs/ase-billing.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 14
+      total-size-cap: 200MB
   level:
     root: info
     org.hibernate.SQL: ${SQL_LOG:info}
@@ -41,3 +60,6 @@ logging:
     # invisible after the fact. Turn to DEBUG for step-by-step tracing when
     # chasing a specific bug; INFO is enough for normal operation.
     com.ase.billing: ${APP_LOG:info}
+    # (com.ase.billing.wcqc needs no separate line — it's a sub-package of
+    # com.ase.billing above, and Logback level configuration already
+    # applies to descendant packages.)

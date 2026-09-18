@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { masters } from '../api/endpoints';
-import type { Annexure, Consignee } from '../types';
+import type { Annexure, Consignee, Invoice, InvoiceItemLine } from '../types';
 
 /**
  * The PSC statement that prints as page 2 of a sample (S) bill.
@@ -19,6 +19,10 @@ import type { Annexure, Consignee } from '../types';
 interface Props {
   annexure: Annexure | null;
   invoiceNumber?: string;
+  /** The bill's own line items — used to compute the footer totals. */
+  items?: InvoiceItemLine[];
+  /** The saved invoice — used for the tax figures once one exists. */
+  invoice?: Invoice | null;
   readOnly?: boolean;
   onChange: (a: Annexure | null) => void;
 }
@@ -38,7 +42,7 @@ export function blankStatement(invoiceNumber?: string): Annexure {
 
 const ADD_NEW = '__add_new__';
 
-export function PscStatement({ annexure, invoiceNumber, readOnly, onChange }: Props) {
+export function PscStatement({ annexure, invoiceNumber, items = [], invoice, readOnly, onChange }: Props) {
   const [consignees, setConsignees] = useState<Consignee[]>([]);
   const [adding, setAdding] = useState(false);
 
@@ -106,6 +110,36 @@ export function PscStatement({ annexure, invoiceNumber, readOnly, onChange }: Pr
 
   function removeRow(i: number) {
     patch({ rows: annexure!.rows.filter((_, k) => k !== i) });
+  }
+
+  /** 42500.00 -> "42500"; 1106.50 -> "1106.50" — ASE's own notation. */
+  function noDp(n: number): string {
+    const r = Math.round(n * 100) / 100;
+    return Number.isInteger(r) ? String(r) : r.toFixed(2);
+  }
+
+  /**
+   * Builds the footer block from the bill's own figures — the same "TOTAL 17
+   * SET PSC @RS 2500/-=RS 42500" / "SERVICE CHARGES..." / "GST 18%RS.../-"
+   * summary ASE always hand-types under the consignee list. Computed from the
+   * saved invoice's actual items and tax amounts so it can never disagree with
+   * the bill itself, the way a retyped figure could.
+   */
+  function fillTotals() {
+    if (!invoice) return;
+    const sets = annexure!.rows.length;
+    const psc = items.find((i) => i.printedDescription.toUpperCase().includes('PHYTOSANITARY'));
+    const service = items.find((i) => i.printedDescription.toUpperCase().includes('SERVICE CHARGE'));
+    const lines: string[] = [];
+    if (psc) lines.push(`TOTAL ${sets} SET PSC @RS${noDp(psc.rate ?? 0)}/-=RS${noDp(psc.amount)}`);
+    if (service) lines.push(`SERVICE CHARGES ${sets} SETS@RS${noDp(service.rate ?? 0)}=RS${noDp(service.amount)}/-`);
+    lines.push(`TOTAL RS${noDp(invoice.subtotal)}/-`);
+    const inter = invoice.igstRate > 0;
+    const gstRate = inter ? invoice.igstRate : invoice.cgstRate + invoice.sgstRate;
+    const gstAmount = inter ? invoice.igstAmount : invoice.cgstAmount + invoice.sgstAmount;
+    lines.push(`GST ${noDp(gstRate)}%RS${noDp(gstAmount)}/-`);
+    lines.push(`TOTAL Rs${noDp(invoice.grandTotal)}/-`);
+    patch({ footerText: lines.join('\n') });
   }
 
   const setCount = annexure.rows.length;
@@ -210,6 +244,26 @@ export function PscStatement({ annexure, invoiceNumber, readOnly, onChange }: Pr
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="card-body pt-3">
+        <div className="d-flex justify-content-between align-items-center mb-1">
+          <label className="form-label small mb-0" htmlFor="psc-footer">
+            Footer — the hand-totalled summary printed under the consignee list
+          </label>
+          {!readOnly && (
+            <button type="button" className="btn btn-sm btn-outline-primary" disabled={!invoice}
+                    onClick={fillTotals}
+                    title={invoice ? undefined : 'Save the draft first — the totals come from the saved bill'}>
+              Fill in totals from this bill
+            </button>
+          )}
+        </div>
+        <textarea id="psc-footer" className="form-control form-control-sm font-monospace" rows={5}
+                  readOnly={readOnly}
+                  placeholder={'TOTAL 17 SET PSC @RS 2500/-=RS 42500\nSERVICE CHARGES 17 SETS@RS 500=8500/-\nTOTAL RS 51000/-\nGST 18%RS 9180/-\nTOTAL Rs 60180/-'}
+                  value={annexure.footerText ?? ''}
+                  onChange={(e) => patch({ footerText: e.target.value || null })} />
       </div>
     </div>
   );

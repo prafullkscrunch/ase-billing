@@ -9,6 +9,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -99,5 +101,98 @@ public class RateUpdateService {
                 service.getId(), newRate, from, username,
                 source == null ? null : source.getInvoiceNumber());
         return true;
+    }
+
+    /**
+     * Moves the general house rate directly, independent of any customer —
+     * used by the Quotation (rate card) screen, where the operator is editing
+     * the master rate itself rather than an invoice line. Same close-old,
+     * open-new pattern as {@link #updateRate}: every invoice already issued
+     * keeps its own frozen copy regardless.
+     */
+    @Transactional
+    public boolean updateGlobalRate(ServiceItem service, BigDecimal newRate, LocalDate from, String username) {
+        Optional<ServiceRate> current = rates.resolveGlobal(service.getId(), from).stream().findFirst();
+
+        if (current.isPresent() && current.get().getRate().compareTo(newRate) == 0) {
+            return false;
+        }
+
+        current.ifPresent(existing -> {
+            if (existing.getEffectiveTo() == null) {
+                existing.setEffectiveTo(from.minusDays(1));
+                rates.save(existing);
+            }
+        });
+
+        ServiceRate fresh = new ServiceRate();
+        fresh.setService(service);
+        fresh.setCustomer(null);
+        fresh.setRate(newRate);
+        fresh.setGstRate(current.map(ServiceRate::getGstRate).orElse(new BigDecimal("18.00")));
+        fresh.setEffectiveFrom(from);
+        fresh.setSource("QUOTATION");
+        fresh.setSetBy(username);
+        rates.save(fresh);
+        log.info("Quotation: service {} rate moved to {} from {} by {}.",
+                service.getId(), newRate, from, username);
+        return true;
+    }
+
+    /**
+     * Called when an invoice that set a rate is deleted. Reverts the master
+     * rate back to whatever it was before — but only in the one case that's
+     * unambiguous: the rate this invoice set is still the current, untouched,
+     * global rate for that service. If anything has changed the rate again
+     * since, or it was a customer-specific arrangement, reverting could
+     * silently undo someone else's later, deliberate change — so instead this
+     * only clears the now-dangling reference to the deleted invoice and
+     * reports plainly that the rate itself was left as is.
+     *
+     * @return one human-readable line per rate this invoice had touched, for
+     *         the delete confirmation to show the operator.
+     */
+    @Transactional
+    public List<String> revertRatesSetBy(Long invoiceId) {
+        List<ServiceRate> caused = rates.findBySetFromInvoice(invoiceId);
+        List<String> notes = new ArrayList<>();
+
+        for (ServiceRate row : caused) {
+            String serviceName = row.getService().getName();
+
+            boolean stillTheActiveGlobalRate = row.getCustomer() == null && row.getEffectiveTo() == null;
+            if (!stillTheActiveGlobalRate) {
+                row.setSetFromInvoice(null);
+                rates.save(row);
+                notes.add(serviceName + "'s rate has changed again since this invoice set it to "
+                        + row.getRate() + " — left as is.");
+                log.info("Invoice {} deleted, but service {} rate has since moved on; left at current value.",
+                        invoiceId, row.getService().getId());
+                continue;
+            }
+
+            Optional<ServiceRate> prior = rates.findByServiceIdAndCustomerIsNullAndEffectiveTo(
+                    row.getService().getId(), row.getEffectiveFrom().minusDays(1));
+
+            if (prior.isEmpty()) {
+                row.setSetFromInvoice(null);
+                rates.save(row);
+                notes.add(serviceName + " was set to " + row.getRate()
+                        + " by this invoice, with no earlier rate to revert to — left as is.");
+                log.info("Invoice {} deleted, but no prior rate exists for service {} to revert to; left at current value.",
+                        invoiceId, row.getService().getId());
+                continue;
+            }
+
+            ServiceRate reopened = prior.get();
+            reopened.setEffectiveTo(null);
+            rates.save(reopened);
+            rates.delete(row);
+            notes.add(serviceName + " reverted to " + reopened.getRate()
+                    + " (this invoice had moved it to " + row.getRate() + ").");
+            log.info("Invoice {} deleted; reverted service {} rate from {} back to {}.",
+                    invoiceId, row.getService().getId(), row.getRate(), reopened.getRate());
+        }
+        return notes;
     }
 }

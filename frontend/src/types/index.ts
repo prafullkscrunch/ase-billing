@@ -181,6 +181,9 @@ export interface DeleteResult {
   numberFreed: boolean;
   freedNumber: number | null;
   note: string;
+  /** One line per master rate this invoice had set via "keep this rate for
+   *  next time" — whether it was reverted, or left as is and why. */
+  rateNotes: string[];
 }
 
 export interface BulkFinalizeResult {
@@ -221,6 +224,18 @@ export interface ShipmentContainerRequest {
   containerSize: string;
 }
 
+export interface LastShipment {
+  hcInvoiceNumber: string | null;
+  icoMarkFull: string | null;
+}
+
+/** What looking up the original bill for a "taken twice" CNF redo finds. found=false means no earlier shipment used this mark at all. */
+export interface OriginalCnfLookup {
+  found: boolean;
+  hadCertificateOfOrigin: boolean;
+  markCount: number;
+}
+
 export interface SequenceState {
   customerCode: string;
   financialYear: string;
@@ -256,4 +271,26 @@ export interface Dashboard {
 export interface ApiError {
   message: string;
   problems: { field: string | null; message: string }[];
+}
+
+/** One row of the Hangal Coffee rate card. Exactly one of serviceId/routeId is set — a routeId row is a flat per-route transport charge (Transportation tab), saved through masters.updateRouteRate rather than quotationApi.update. */
+export interface QuotationLine {
+  serviceId: number | null;
+  routeId: number | null;
+  categoryCode: string;
+  categoryName: string;
+  name: string;
+  calculationType: string;
+  /** True for a per-container charge; false for a flat charge that doesn't
+   *  scale with container count (additionalPerContainer just mirrors
+   *  rateForOneContainer for those, since there's nothing to add). */
+  scalesWithContainers: boolean;
+  rateForOneContainer: number;
+  additionalPerContainer: number;
+  effectiveFrom: string | null;
+}
+
+export interface QuotationUpdateRequest {
+  rateForOneContainer: number;
+  additionalPerContainer: number;
 }

@@ -119,6 +119,24 @@ export function InvoiceEditor() {
     }
   }, [invoice?.shipment]);
 
+  // The PSC statement's title is typed once, when "Attach a PSC statement" is
+  // clicked — which, for a brand-new draft, is before the invoice has a
+  // number at all, so it bakes in as "...ASE bill no " with nothing after it.
+  // Once the invoice is saved and a real number exists, fill it in here rather
+  // than leaving it permanently blank.
+  useEffect(() => {
+    if (!annexure || !invoice?.runningNumber) return;
+    if (/ASE bill no\s*$/.test(annexure.title)) {
+      setAnnexure({
+        ...annexure,
+        title: annexure.title.replace(/ASE bill no\s*$/, `ASE bill no ${invoice.runningNumber}`),
+      });
+    }
+    // annexure is intentionally excluded: this only reacts to the invoice
+    // gaining a number, not to every edit of the title field itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoice?.runningNumber]);
+
   const request: InvoiceRequest | null = useMemo(() => {
     if (customerId == null) return null;
     return {
@@ -405,6 +423,8 @@ export function InvoiceEditor() {
         <PscStatement
           annexure={annexure}
           invoiceNumber={invoice?.runningNumber ? String(invoice.runningNumber) : undefined}
+          items={items}
+          invoice={invoice}
           readOnly={readOnly}
           onChange={setAnnexure}
         />
@@ -505,7 +525,9 @@ export function InvoiceEditor() {
                       setDeleting(true);
                       try {
                         const res = await invoiceApi.remove(invoice.id, reason ?? undefined);
-                        window.alert(`${res.invoiceNumber} deleted. ${res.note}`);
+                        const rateLine = res.rateNotes.length > 0
+                          ? '\n\n' + res.rateNotes.join('\n') : '';
+                        window.alert(`${res.invoiceNumber} deleted. ${res.note}${rateLine}`);
                         navigate('/invoices');
                       } catch (e) {
                         setError(e);

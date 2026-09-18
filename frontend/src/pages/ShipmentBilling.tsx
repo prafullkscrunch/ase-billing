@@ -1,13 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { invoiceApi, masters } from '../api/endpoints';
+import { invoiceApi, masters, shipmentApi } from '../api/endpoints';
 import { ErrorAlert, Spinner } from '../components/Alert';
-import { ParticularsTable, blankLine, lineFromService } from '../components/ParticularsTable';
+import { ParticularsTable, blankLine, lineFromService, withUpdatedPerTeuSuffix } from '../components/ParticularsTable';
 import { money } from '../components/Money';
 import { NextNumber } from '../components/NextNumber';
 import type {
-  Customer, Invoice, InvoiceItemLine, ServiceItem, TransportLeg, TransportRoute,
+  Customer, Invoice, InvoiceItemLine, OriginalCnfLookup, ServiceItem, TransportLeg, TransportRoute,
 } from '../types';
+
+/**
+ * "ES/HC/2027/094" -> "ES/HC/2027/095"; "14/1850/2026/283" -> "14/1850/2026/284".
+ * Increments the last run of digits in the string, which is how ASE's own
+ * HC invoice and ICO mark numbers usually move from one shipment to the
+ * next. Falls back to the original string unchanged if there's no trailing
+ * number to bump — this is a starting suggestion, not a guarantee, and the
+ * field it fills stays fully editable.
+ */
+function incrementTrailingNumber(value: string): string {
+  const m = value.match(/(\d+)(\D*)$/);
+  if (!m) return value;
+  const digits = m[1];
+  const next = String(Number(digits) + 1).padStart(digits.length, '0');
+  return value.slice(0, m.index) + next + m[2];
+}
 
 /**
  * The main screen. One shipment produces a CNF bill and a T bill with consecutive
@@ -31,6 +47,21 @@ export function ShipmentBilling() {
   const [icoMarkFull, setIcoMarkFull] = useState('');
   const [containerCount, setContainerCount] = useState(1);
   const [containerSize, setContainerSize] = useState('20');
+  // Confirmed rare (max ~10/year): a shipment routed via Cochin instead of
+  // Mangalore bills six of the standard CNF charges at different rates and
+  // adds one Cochin-only charge (Tally Wages) — see masters.standardSheet.
+  const [cochin, setCochin] = useState(false);
+
+  // "Taken twice" CNF redo — certificates re-issued for an already-billed
+  // shipment (changed consignee, changed port of discharge, etc.). Confirmed
+  // against real bills (CNF/037, CNF/347): only ICO/Permit, Phytosanitary and
+  // Weight & Quality are re-billed, at ICO's normal per-mark rate but a
+  // halved base — plus Certificate of origin, only if the original bill had
+  // one, which is why this looks the original bill up rather than assuming.
+  const [takenTwice, setTakenTwice] = useState(false);
+  const [takenTwiceReason, setTakenTwiceReason] = useState('');
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupResult, setLookupResult] = useState<OriginalCnfLookup | null>(null);
 
   const [cnfItems, setCnfItems] = useState<InvoiceItemLine[]>([]);
   const [standard, setStandard] = useState<ServiceItem[]>([]);
@@ -55,6 +86,47 @@ export function ShipmentBilling() {
   );
   const containerNotation = `${containerCount}X${containerSize}`;
 
+  // ICO/Permit is billed by number of ICO marks, not TEU, whenever those
+  // differ — confirmed against real bills (e.g. CNF/374: "1X20" but marks
+  // 292-295, billed for 4). Mirrors Shipment.markCount() on the backend
+  // exactly, so both sides agree on the same number.
+  const markCount = useMemo(() => {
+    const tail = icoMarkFull.split('/').pop()?.trim() ?? '';
+    const dash = tail.indexOf('-');
+    if (dash <= 0 || dash === tail.length - 1) return 1;
+    const start = parseInt(tail.slice(0, dash), 10);
+    const end = parseInt(tail.slice(dash + 1), 10);
+    if (Number.isNaN(start) || Number.isNaN(end)) return 1;
+    const count = end - start + 1;
+    return count > 0 ? count : 1;
+  }, [icoMarkFull]);
+
+  const icoEffectiveTeu = Math.max(teu, markCount);
+  const icoServiceId = useMemo(
+    () => services.find((s) => s.name.toUpperCase().includes('ICO/PERMIT'))?.id ?? null,
+    [services],
+  );
+
+  // Suggests the next HC invoice / ICO mark number from this customer's last
+  // shipment — "+1" on whatever was last used, which is the pattern almost
+  // every real shipment follows. Only fills the fields when they're still
+  // blank, so it never overwrites something already typed for this bill, and
+  // both stay freely editable — the suggestion is wrong whenever the
+  // customer's own numbering resets (e.g. a new series each October).
+  useEffect(() => {
+    if (customerId == null) return;
+    shipmentApi.last(customerId)
+      .then((last) => {
+        if (last.hcInvoiceNumber) {
+          setHcInvoiceNumber((cur) => cur || incrementTrailingNumber(last.hcInvoiceNumber!));
+        }
+        if (last.icoMarkFull) {
+          setIcoMarkFull((cur) => cur || incrementTrailingNumber(last.icoMarkFull!));
+        }
+      })
+      .catch(() => { /* no prior shipment, or lookup failed — leave fields blank */ });
+  }, [customerId]);
+
   useEffect(() => {
     Promise.all([masters.customers(), masters.routes()])
       .then(([cs, rs]) => {
@@ -69,31 +141,56 @@ export function ShipmentBilling() {
 
   // Rates are customer-specific, so reload the CNF service list when it changes,
   // and start the bill from the standard charge sheet — every CNF bill ASE
-  // issues carries the same fourteen charges.
+  // issues carries the same fourteen charges. Also reloads when the Cochin
+  // flag changes, since that swaps six of those rates and adds Tally Wages.
+  const firstStandardLoad = useRef(true);
   useEffect(() => {
     if (customerId == null) return;
-    masters.services('CNF', customerId).then(setServices).catch(setError);
-    masters.standardSheet('CNF', customerId)
+    masters.services('CNF', customerId, cochin).then(setServices).catch(setError);
+    masters.standardSheet('CNF', customerId, cochin)
       .then((sheet) => {
         setStandard(sheet);
-        setCnfItems((current) =>
-          current.length === 0
-            ? sheet.map((svc) => lineFromService(svc, teu, containerNotation))
-            : current);
+        const isFirstLoad = firstStandardLoad.current;
+        firstStandardLoad.current = false;
+        const buildLines = () => sheet.map((svc) =>
+          lineFromService(svc, svc.name.toUpperCase().includes('ICO/PERMIT') ? icoEffectiveTeu : teu, containerNotation));
+        setCnfItems((current) => {
+          if (current.length === 0 || isFirstLoad) {
+            return current.length === 0 ? buildLines() : current;
+          }
+          if (!window.confirm(
+            `Switch the CNF charges to the ${cochin ? 'Cochin' : 'Mangalore'} rate sheet?\n\n`
+            + 'This replaces every CNF line below with the standard sheet for the new port — '
+            + 'any changes already made to those lines will be lost.')) {
+            return current;
+          }
+          return buildLines();
+        });
       })
       .catch(setError);
-    // teu and containerNotation are read for the initial fill only; changing the
-    // container count re-prices the lines through the effect below instead.
+    // teu, icoEffectiveTeu and containerNotation are read for the initial fill
+    // only; changing the container count or ICO mark re-prices the lines
+    // through the effect below instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId]);
+  }, [customerId, cochin]);
 
-  // Re-price per-TEU lines when the container count changes.
+  // Re-price per-TEU lines when the container count (or, for ICO/Permit, the
+  // ICO mark count) changes, and refresh their printed wording along with it —
+  // the amount already followed the change here; without this the "@Rs.. per
+  // TEU" text went stale the moment it changed after the line was added.
   useEffect(() => {
-    setCnfItems((current) => current.map((line) =>
-      line.calculationType === 'PER_TEU'
-        ? { ...line, teu, quantity: teu, amount: (line.baseAmount ?? 0) + (line.rate ?? 0) * teu }
-        : line));
-  }, [teu]);
+    setCnfItems((current) => current.map((line) => {
+      if (line.calculationType !== 'PER_TEU') return line;
+      const effectiveTeu = line.serviceId === icoServiceId ? icoEffectiveTeu : teu;
+      return {
+        ...line,
+        teu: effectiveTeu,
+        quantity: effectiveTeu,
+        amount: (line.baseAmount ?? 0) + (line.rate ?? 0) * effectiveTeu,
+        printedDescription: withUpdatedPerTeuSuffix(line.printedDescription, line, effectiveTeu),
+      };
+    }));
+  }, [teu, icoEffectiveTeu, icoServiceId]);
 
   // Keep the single-leg container count in step with the shipment.
   useEffect(() => {
@@ -119,6 +216,61 @@ export function ShipmentBilling() {
   const transportPreview = legs.reduce((sum, leg) => sum + legRate(leg) * leg.containers, 0)
     + (hassanRate ? hassanRate * hassanTeu : 0);
 
+  /**
+   * Looks up the original bill for the typed ICO mark and, if found, replaces
+   * the CNF lines with the "taken twice" redo sheet: ICO/Permit at its normal
+   * per-mark rate but a halved base, Phytosanitary and Weight & Quality at
+   * their normal flat rates, and Certificate of origin only if the original
+   * bill had one. Confirmed against real bills (CNF/037 single-mark, CNF/347
+   * two-mark) rather than assumed.
+   */
+  async function lookupOriginalAndApplyTakenTwice() {
+    if (!icoMarkFull.trim()) {
+      setError(new Error('Enter the ICO mark number first — the original bill is looked up by that mark.'));
+      return;
+    }
+    setLookupBusy(true);
+    setError(null);
+    try {
+      const result = await shipmentApi.originalCnf(icoMarkFull.trim());
+      setLookupResult(result);
+
+      const byName = (name: string) => services.find((s) => s.name.toLowerCase() === name.toLowerCase());
+      const icoService = byName('ICO/Permit, ROC Submission & Self-sealing Documentation') ?? byName('ICO/Permit');
+      const phytoService = byName('Expenses on Phytosanitary certificate');
+      const certWeightService = byName('Certificate of weight & quality');
+      const certOriginService = byName('Certificate of origin');
+
+      const additionalMarks = Math.max(0, result.markCount - 1);
+      const icoAmount = 500 + 500 * additionalMarks;
+      const icoDescription = (additionalMarks > 0
+        ? `${icoService?.printTemplate ?? 'ICO/Permit, ROC Submission & Self-sealing Documentation'} Addl. ICO ${additionalMarks}SETS@500/-`
+        : (icoService?.printTemplate ?? 'ICO/Permit, ROC Submission & Self-sealing Documentation'));
+
+      const redoLines: InvoiceItemLine[] = [
+        { ...blankLine(teu), serviceId: icoService?.id ?? null, printedDescription: icoDescription,
+          calculationType: 'MANUAL', amount: icoAmount, quantity: 1 },
+      ];
+      if (phytoService) redoLines.push(lineFromService(phytoService, teu, containerNotation));
+      if (certWeightService) redoLines.push(lineFromService(certWeightService, teu, containerNotation));
+      if (result.hadCertificateOfOrigin && certOriginService) {
+        redoLines.push(lineFromService(certOriginService, teu, containerNotation));
+      }
+
+      if (cnfItems.length > 0 && !window.confirm(
+        'Replace the CNF lines below with the "taken twice" redo sheet (ICO/Permit, Phytosanitary, '
+        + `Weight & Quality${result.hadCertificateOfOrigin ? ', Certificate of origin' : ''})?\n\n`
+        + 'Any changes already made to the CNF lines below will be lost.')) {
+        return;
+      }
+      setCnfItems(redoLines);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setLookupBusy(false);
+    }
+  }
+
   async function generate() {
     if (customerId == null) return;
     setSaving(true);
@@ -127,7 +279,10 @@ export function ShipmentBilling() {
       const pair = await invoiceApi.billPair({
         customerId,
         invoiceDate,
-        shipment: { hcInvoiceNumber, icoMarkFull, containerCount, containerSize },
+        shipment: {
+          hcInvoiceNumber, icoMarkFull, containerCount, containerSize,
+          notes: takenTwice && takenTwiceReason.trim() ? takenTwiceReason.trim() : undefined,
+        },
         cnfItems: includeCnf ? cnfItems : [],
         legs: includeTransport ? legs : [],
         hassanRatePerTeu: includeTransport ? hassanRate : null,
@@ -249,12 +404,56 @@ export function ShipmentBilling() {
                     : 'Only the transport bill is created — for a shipment already cleared on another bill.'}
                 </div>
               )}
+
+              {billMode === 'CNF' && (
+                <div className="border rounded p-2 mt-2">
+                  <div className="form-check">
+                    <input id="takenTwice" type="checkbox" className="form-check-input"
+                           checked={takenTwice}
+                           onChange={(e) => { setTakenTwice(e.target.checked); setLookupResult(null); }} />
+                    <label className="form-check-label" htmlFor="takenTwice">
+                      Taken twice (certificates re-issued for an already-billed shipment)
+                    </label>
+                  </div>
+                  {takenTwice && (
+                    <div className="mt-2">
+                      <label className="form-label" htmlFor="takenTwiceReason">
+                        Reason (prints after the HSN code, in parens — e.g. "Taken twice due change in consignee")
+                      </label>
+                      <div className="input-group">
+                        <input id="takenTwiceReason" className="form-control"
+                               placeholder="Taken twice due change in consignee"
+                               value={takenTwiceReason}
+                               onChange={(e) => setTakenTwiceReason(e.target.value)} />
+                        <button className="btn btn-outline-primary" type="button" disabled={lookupBusy}
+                                onClick={lookupOriginalAndApplyTakenTwice}>
+                          {lookupBusy ? 'Looking up…' : 'Look up original & fill CNF lines'}
+                        </button>
+                      </div>
+                      {lookupResult && (
+                        <div className="form-text">
+                          {lookupResult.found
+                            ? `Original bill found — ${lookupResult.markCount} mark(s), `
+                              + `${lookupResult.hadCertificateOfOrigin ? 'included' : 'did not include'} Certificate of origin.`
+                            : 'No earlier bill found for this mark — enter the redo lines by hand below.'}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="col-md-4">
               <label className="form-label" htmlFor="customer">Customer</label>
               <select id="customer" className="form-select" value={customerId ?? ''}
-                      onChange={(e) => setCustomerId(Number(e.target.value))}>
+                      onChange={(e) => {
+                        setCustomerId(Number(e.target.value));
+                        // A different customer's numbering is unrelated to
+                        // whatever was suggested for the last one.
+                        setHcInvoiceNumber('');
+                        setIcoMarkFull('');
+                      }}>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -272,6 +471,7 @@ export function ShipmentBilling() {
               <input id="hcinv" className="form-control font-monospace" value={hcInvoiceNumber}
                      placeholder="ES/HC/2027/094"
                      onChange={(e) => setHcInvoiceNumber(e.target.value)} />
+              <div className="form-text">Suggested from this customer's last shipment — edit freely.</div>
             </div>
 
             <div className="col-md-3">
@@ -295,6 +495,17 @@ export function ShipmentBilling() {
                 </select>
               </div>
               <div className="form-text">{containerNotation} · {teu} TEU</div>
+            </div>
+
+            <div className="col-md-3 d-flex align-items-end">
+              <div className="form-check">
+                <input id="cochin" type="checkbox" className="form-check-input"
+                       checked={cochin} onChange={(e) => setCochin(e.target.checked)} />
+                <label className="form-check-label" htmlFor="cochin">
+                  Cochin-bound shipment
+                </label>
+                <div className="form-text">Uses Cochin CNF rates and adds Tally Wages.</div>
+              </div>
             </div>
           </div>
         </div>

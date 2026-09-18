@@ -48,6 +48,45 @@ export function blankLine(teu: number): InvoiceItemLine {
 }
 
 /**
+ * ASE's own convention: a per-TEU charge's printed line names its rate once
+ * there's more than one container to multiply it by — "Customs Clearance
+ * charges @Rs1750 per TEU" — but at a single container/TEU there's nothing to
+ * explain, so the plain name prints alone, exactly as the standard 1-container
+ * charge sheet shows it. A per-TEU-plus-base charge (ICO/Permit, the
+ * phytosanitary and weight-and-quality certificates) uses ASE's "add'l"
+ * phrasing for the per-container increment on top of the fixed part.
+ */
+interface RateShape {
+  calculationType: string;
+  rate?: number | null;
+  baseAmount?: number | null;
+}
+
+function perTeuSuffix(item: RateShape, teu: number): string {
+  if (teu <= 1) return '';
+  if (item.calculationType !== 'PER_TEU' && item.calculationType !== 'PER_TEU_PER_DAY') return '';
+  const rate = item.rate ?? 0;
+  return item.baseAmount && item.baseAmount > 0
+    ? ` (add'l @Rs${rate} per TEU)`
+    : ` @Rs${rate} per TEU`;
+}
+
+// Matches a suffix this same function previously appended, so a container
+// count changed twice doesn't stack "@Rs.. per TEU @Rs.. per TEU" on itself.
+const PER_TEU_SUFFIX_RE = / \(add'l @Rs[\d.]+ per TEU\)$| @Rs[\d.]+ per TEU$/;
+
+/**
+ * Re-derives a line's per-TEU suffix after its container count/TEU changes,
+ * without disturbing anything else the operator typed into the description.
+ * Used when a shipment's container count changes after per-TEU lines were
+ * already added — the amount already re-prices on that change; this is what
+ * makes the printed wording follow it too, instead of going stale.
+ */
+export function withUpdatedPerTeuSuffix(description: string, item: RateShape, teu: number): string {
+  return description.replace(PER_TEU_SUFFIX_RE, '') + perTeuSuffix(item, teu);
+}
+
+/**
  * Turns a master service into an invoice line with its rate and quantity filled
  * in, so the amount computes itself. Used both for the standard sheet and for
  * picking a service from the dropdown.
@@ -61,7 +100,9 @@ export function lineFromService(
     serviceId: svc.id,
     routeId: null,
     printedDescription:
-      renderTemplate(svc.printTemplate, quantity, rate, null, containerNotation) || svc.name,
+      (renderTemplate(svc.printTemplate, quantity, rate, null, containerNotation) || svc.name)
+      + perTeuSuffix({ calculationType: svc.calculationType, rate: svc.currentRate,
+                       baseAmount: svc.baseAmount }, teu),
     quantity,
     unit: svc.defaultUnit,
     rate,

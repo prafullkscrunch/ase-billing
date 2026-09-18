@@ -16,7 +16,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
 /**
  * Renders an invoice in ASE's house format, reproducing their Word template.
@@ -40,6 +42,11 @@ import java.time.format.DateTimeFormatter;
 public class InvoicePdfService {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd-MM-yyyy");
+    // ASE's own PSC statement sheet ("HC SAMPLE PSC DETAILS...") prints its date
+    // column as mm-dd-yy — different from the dd-MM-yyyy used on the bill itself.
+    // The date is stored as plain ISO text (yyyy-MM-dd, from the browser's date
+    // input) and only reformatted here for print.
+    private static final DateTimeFormatter PSC_DATE = DateTimeFormatter.ofPattern("MM-dd-yy");
 
     private static final Font F_COMPANY = new Font(Font.HELVETICA, 12, Font.BOLD);
     private static final Font F_ADDRESS = new Font(Font.HELVETICA, 10);
@@ -183,6 +190,13 @@ public class InvoicePdfService {
         }
         if (notBlank(inv.getHsnCode())) {
             sb.append("\nHsn code.").append(inv.getHsnCode());
+            // A shipment's notes render right here, in parens, with no space —
+            // "Hsn code.996713(Taken twice due change in consignee)" — matching
+            // ASE's own historical bills exactly (e.g. CNF/347, CNF/037). This
+            // is where the "taken twice" redo flow's reason text ends up.
+            if (s != null && notBlank(s.getNotes())) {
+                sb.append('(').append(s.getNotes()).append(')');
+            }
         }
         return sb.toString();
     }
@@ -199,6 +213,14 @@ public class InvoicePdfService {
 
         // Blank lines separate the charges from the bank block, as on the template.
         p.add(new Chunk("\n\n", F_BODY));
+
+        // The deduction prints here — description AND amount together as one
+        // line of text in the Particulars column — never in the Amount column.
+        // The Amount column only ever holds numbers stacked one below another.
+        if (inv.getPostTaxAdjustmentAmount().signum() != 0) {
+            p.add(new Chunk(inv.getPostTaxAdjustmentLabel() + " RS "
+                    + slash(inv.getPostTaxAdjustmentAmount()) + "\n\n", F_LABEL));
+        }
 
         p.add(new Chunk("BANK DETAILS: " + co.getName() + "\n", F_LABEL));
         p.add(new Chunk(co.getBankName() + "\n", F_LABEL));
@@ -236,8 +258,12 @@ public class InvoicePdfService {
         p.add(new Chunk("RS." + twoDp(inv.getGrandTotal()) + "\n", F_LABEL));
 
         if (inv.getPostTaxAdjustmentAmount().signum() != 0) {
-            p.add(new Chunk(inv.getPostTaxAdjustmentLabel() + "\n", F_BODY));
-            p.add(new Chunk("RS." + twoDp(inv.getNetPayable()) + "\n", F_LABEL));
+            // Just the resulting figure, underlined — the label already printed
+            // on the left, next to its amount, as one line of text.
+            Chunk net = new Chunk("RS." + twoDp(inv.getNetPayable()), F_LABEL);
+            net.setUnderline(0.5f, -2f);
+            p.add(net);
+            p.add(Chunk.NEWLINE);
         }
         return p;
     }
@@ -282,7 +308,7 @@ public class InvoicePdfService {
 
         for (InvoiceAnnexureRow row : a.getRows()) {
             t.addCell(plainCell(row.getCol1()));
-            t.addCell(plainCell(row.getCol2() == null ? "" : row.getCol2()));
+            t.addCell(plainCell(pscDate(row.getCol2())));
         }
         doc.add(t);
 
@@ -290,6 +316,21 @@ public class InvoicePdfService {
             Paragraph f = new Paragraph(a.getFooterText(), F_BODY);
             f.setSpacingBefore(18);
             doc.add(f);
+        }
+    }
+
+    /**
+     * The PSC date column stores plain ISO text (yyyy-MM-dd, from the browser's
+     * date input). Reprints it as ASE's own sheet does — mm-dd-yy — falling back
+     * to whatever was typed if it isn't a date at all (col2 is a generic
+     * annexure column and not every use of it holds a date).
+     */
+    private String pscDate(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        try {
+            return LocalDate.parse(raw).format(PSC_DATE);
+        } catch (DateTimeParseException e) {
+            return raw;
         }
     }
 

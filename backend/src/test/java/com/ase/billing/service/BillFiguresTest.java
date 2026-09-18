@@ -111,7 +111,7 @@ class BillFiguresTest {
                 line("Halting charges 3 days per TEU per day @Rs 2000/-", "12000"),
                 line("Certificate of weight & quality", "2250"),
                 line("Certificate of origin", "1750"),
-                line("JSW containers and Seal Scanning Charges", "1600"),
+                line("Containers Seal Scanning Charges", "1600"),
                 line("EDI charges", "1000"),
                 line("Empty Container survey fee", "800"),
                 line("Customs Clearance charges", "3500"),

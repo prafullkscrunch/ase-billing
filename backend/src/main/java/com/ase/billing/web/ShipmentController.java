@@ -1,5 +1,6 @@
 package com.ase.billing.web;
 
+import com.ase.billing.repo.ShipmentRepository;
 import com.ase.billing.service.ShipmentBillingService;
 import com.ase.billing.web.dto.Dtos.*;
 import jakarta.validation.Valid;
@@ -17,11 +18,48 @@ public class ShipmentController {
     private static final Logger log = LoggerFactory.getLogger(ShipmentController.class);
 
     private final ShipmentBillingService billing;
+    private final ShipmentRepository shipments;
     private final InvoiceMapper mapper;
 
-    public ShipmentController(ShipmentBillingService billing, InvoiceMapper mapper) {
+    public ShipmentController(ShipmentBillingService billing, ShipmentRepository shipments,
+                              InvoiceMapper mapper) {
         this.billing = billing;
+        this.shipments = shipments;
         this.mapper = mapper;
+    }
+
+    /**
+     * The customer's most recent shipment — lets the "Bill a shipment" screen
+     * suggest the next HC invoice / ICO mark number (typically "+1" on
+     * whatever was last used) instead of the operator retyping it. A
+     * suggestion only: the fields it fills stay freely editable, since the
+     * pattern breaks whenever the customer's own numbering resets.
+     */
+    @GetMapping("/last")
+    public LastShipmentView last(@RequestParam Long customerId) {
+        return shipments.findTopByCustomerIdOrderByIdDesc(customerId)
+                .map(s -> new LastShipmentView(s.getHcInvoiceNumber(), s.getIcoMarkFull()))
+                .orElse(new LastShipmentView(null, null));
+    }
+
+    /**
+     * Backs the "taken twice" CNF redo flow: certificates re-issued for a
+     * shipment already billed once (a changed consignee, a changed port of
+     * discharge, etc.) — confirmed against real bills, this only ever
+     * re-bills ICO/Permit (at a halved base, but the same per-additional-
+     * mark rate as a normal bill), Phytosanitary, and Weight & Quality, plus
+     * Certificate of origin *if and only if* the original bill had one.
+     *
+     * <p>The lookup itself lives in {@link ShipmentBillingService}, not
+     * here — it needs to read a lazily-loaded {@code Invoice.category}, and
+     * with open-in-view off (see that class's {@code hydrate} method) a
+     * transaction has to still be open when that's read, which a plain
+     * controller method sitting outside any {@code @Transactional} boundary
+     * can't guarantee. It never creates or changes anything either way.
+     */
+    @GetMapping("/original-cnf")
+    public OriginalCnfLookup originalCnf(@RequestParam String mark) {
+        return billing.lookupOriginalCnf(mark);
     }
 
     /**
